@@ -1,0 +1,41 @@
+# ========================
+# RAHASIA & KONFIGURASI
+# ========================
+.env
+.env.*
+*.env
+
+# ========================
+# VIRTUAL ENVIRONMENT (VENV)
+# ========================
+# Jangan pernah upload venv ke GitHub karena ukurannya bergiga-giga!
+venv/
+env/
+.venv/
+Scripts/
+
+# ========================
+# FILE SAMPAH PYTHON
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ========================
+# LOG & DATABASE LOKAL (Jaga-jaga)
+# ========================
+*.log
+*.sqlite3
+*.db
+
+# ========================
+# PENGATURAN TEKS EDITOR (VS Code dll)
+# ========================
+.vscode/
+.idea/
+
+# ========================
+# FILE SAMPAH OS (Windows/Mac)
+# ========================
+Thumbs.db
+.DS_Store
