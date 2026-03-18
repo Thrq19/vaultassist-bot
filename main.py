@@ -12,6 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from supabase import create_client, Client
+from aiohttp import web # <-- PENTING BUAT DUMMY SERVER RENDER
 
 # ==========================================
 # 1. SETUP & KONFIGURASI
@@ -127,7 +128,6 @@ async def send_help_instructions(bot: Bot, chat_id: int, user_id: int):
         teks += f"📞 *Need technical support? Contact:* {CONTACT_USERNAME}"
 
     await bot.send_message(chat_id=chat_id, text=teks, parse_mode="Markdown")
-# ----------------------------------------
 
 # ==========================================
 # FUNGSI BANTUAN UI
@@ -1336,7 +1336,24 @@ async def queue_garbage_collector():
         await asyncio.sleep(3600) 
 
 # ==========================================
-# 7. FUNGSI UTAMA (MAIN LOOP)
+# 8. DUMMY WEB SERVER (ANTI-SLEEP RENDER)
+# ==========================================
+async def handle_web(request):
+    return web.Response(text="VaultAssist Bot is Alive and Kicking! 🚀")
+
+async def run_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_web)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌍 Dummy Web Server nyala di port {port}...")
+
+# ==========================================
+# 9. FUNGSI UTAMA (MAIN LOOP)
 # ==========================================
 async def main():
     bot = Bot(token=TOKEN)
@@ -1359,7 +1376,9 @@ async def main():
     ]
     await bot.set_my_commands(cmd_group, scope=BotCommandScopeAllGroupChats())
     
+    # Menjalankan Background Tasks
     asyncio.create_task(queue_garbage_collector())
+    asyncio.create_task(run_web_server()) # Web Server nyala bareng bot
     
     print("Mengecek sistem... VaultAssist siap beroperasi! 🟢")
     await dp.start_polling(bot)
