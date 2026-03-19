@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from supabase import create_client, Client
-from aiohttp import web # <-- PENTING BUAT DUMMY SERVER RENDER
+from aiohttp import web 
 
 # ==========================================
 # 1. SETUP & KONFIGURASI
@@ -32,9 +32,14 @@ dp = Dispatcher()
 album_cache = {}
 last_upload_time = {}
 user_search_cache = {} 
+wizard_cache = {} # Cache buat menyimpan preferensi caption selama proses wizard berjalan
 
 class LoginState(StatesGroup):
     waiting_for_password = State()
+
+class WizardState(StatesGroup):
+    waiting_for_rename = State()
+    waiting_for_caption = State()
 
 async def db_exec(query_func):
     return await asyncio.to_thread(query_func)
@@ -74,12 +79,11 @@ async def send_help_instructions(bot: Bot, chat_id: int, user_id: int):
 
     if lang == "id":
         teks = "📚 **PANDUAN PENGGUNAAN GROUP VAULT ASSISTANT**\n\n"
-        
         teks += "👤 **1. PANDUAN PENGGUNA (USER BIASA)**\n"
         teks += "*Cara Mengarsipkan File (Upload):*\n"
         teks += "1️⃣ Kirim file, foto, atau dokumen secara langsung (Japri) ke chat bot ini.\n"
         teks += "2️⃣ Ketik `/queue` untuk membuka keranjang antrean file Anda.\n"
-        teks += "3️⃣ Klik tombol **➡️ Proses File Ini**, lalu ketik *Nama Baru* untuk file tersebut.\n"
+        teks += "3️⃣ Klik tombol **➡️ Proses File Ini**, lalu ikuti panduan pengaturan (Ganti Nama, Tampilkan Caption, Tambah Caption Tambahan).\n"
         teks += "4️⃣ Pilih *Grup* dan *Topik (Folder)* tujuannya. File otomatis terkirim & tersimpan!\n\n"
         teks += "*Cara Mencari File (Download):*\n"
         teks += "• Ketik `/files` untuk menelusuri arsip layaknya membuka folder di komputer.\n"
@@ -88,42 +92,41 @@ async def send_help_instructions(bot: Bot, chat_id: int, user_id: int):
         teks += "👮 **2. PANDUAN ADMIN GRUP**\n"
         teks += "• **Setup Awal:** Masukkan bot ini ke grup Telegram Anda dan pastikan menjadikannya Admin.\n"
         teks += "• **Auto-Folder:** Setiap Anda membuat *Topik* baru di grup Telegram, bot akan otomatis mencatatnya sebagai Folder Arsip.\n"
-        teks += "• **Atur Hak Akses:** Ketik `/group_settings on` di dalam grup agar *member biasa* diizinkan menyimpan file ke grup tersebut via bot. Ketik `off` untuk mengunci (hanya Admin yang bisa).\n"
+        teks += "• **Atur Hak Akses:** Ketik `/group_settings on` di dalam grup agar *member biasa* diizinkan menyimpan file ke grup tersebut via bot.\n"
         teks += "• **CCTV Otomatis:** Setiap media yang dikirim langsung di dalam grup akan otomatis diarsipkan.\n\n"
 
         if is_superadmin:
             teks += "👑 **3. PANDUAN SUPER ADMIN (SUDO)**\n"
             teks += "• `/set_backup` : Ketik perintah ini di *Grup Rahasia* Anda untuk menjadikannya Brankas Utama. Semua file dari grup mana pun akan di-copy ke sini diam-diam.\n"
-            teks += "• `/stats` : Buka Dashboard untuk melihat total file, grup, dan sisa antrean di Database.\n"
-            teks += "• `/set_gc <angka>` : Atur sistem pembersih otomatis. Contoh: `/set_gc 48` (Bot akan menghapus file antrean user yang tidak diproses selama 48 jam).\n"
-            teks += "• Anda memiliki wewenang penuh. Perintah `/files` dan `/search` Anda dapat menembus seluruh privasi grup.\n\n"
+            teks += "• `/stats` : Buka Dashboard untuk melihat statistik Database.\n"
+            teks += "• `/set_gc <angka>` : Atur sistem pembersih otomatis.\n"
+            teks += "• Anda memiliki wewenang penuh pada arsip lintas grup.\n\n"
         
         teks += f"📞 *Butuh bantuan teknis? Hubungi:* {CONTACT_USERNAME}"
     else:
         teks = "📚 **GROUP VAULT ASSISTANT USER GUIDE**\n\n"
-        
         teks += "👤 **1. REGULAR USER GUIDE**\n"
         teks += "*How to Archive a File (Upload):*\n"
         teks += "1️⃣ Send a file, photo, or document directly (DM) to this bot.\n"
         teks += "2️⃣ Type `/queue` to open your upload queue.\n"
-        teks += "3️⃣ Click **➡️ Process This File**, then type a *New Name* for it.\n"
+        teks += "3️⃣ Click **➡️ Process This File**, then follow the setup wizard (Rename, Show Caption, Add Custom Caption).\n"
         teks += "4️⃣ Select the destination *Group* and *Topic (Folder)*. The file will be sent & saved!\n\n"
         teks += "*How to Find a File (Download):*\n"
-        teks += "• Type `/files` to browse archives just like opening folders on a computer.\n"
-        teks += "• Type `/search <keyword>` to quickly find a file by its name.\n\n"
+        teks += "• Type `/files` to browse archives.\n"
+        teks += "• Type `/search <keyword>` to quickly find a file.\n\n"
         
         teks += "👮 **2. GROUP ADMIN GUIDE**\n"
         teks += "• **Initial Setup:** Add this bot to your Telegram group and promote it to Admin.\n"
-        teks += "• **Auto-Folder:** Every time you create a new *Topic* in the group, the bot automatically registers it as an Archive Folder.\n"
-        teks += "• **Set Permissions:** Type `/group_settings on` inside the group to allow regular members to save files there via the bot. Type `off` to lock it (Admin only).\n"
-        teks += "• **Auto-CCTV:** Any media sent directly in the group will be automatically archived.\n\n"
+        teks += "• **Auto-Folder:** New Topics in the group are automatically registered as Archive Folders.\n"
+        teks += "• **Set Permissions:** Type `/group_settings on` inside the group to allow members to upload.\n"
+        teks += "• **Auto-CCTV:** Media sent directly in the group is automatically archived.\n\n"
 
         if is_superadmin:
             teks += "👑 **3. SUPER ADMIN GUIDE (SUDO)**\n"
-            teks += "• `/set_backup` : Type this inside your *Secret Group* to make it the Main Vault. All files from any group will be silently copied here.\n"
-            teks += "• `/stats` : Open the Dashboard to see total files, groups, and pending queues in the Database.\n"
-            teks += "• `/set_gc <number>` : Set the auto-clean system. Example: `/set_gc 48` (Bot deletes users' pending queue files left unprocessed for 48 hours).\n"
-            teks += "• You have absolute authority. Your `/files` and `/search` commands bypass all group privacy settings.\n\n"
+            teks += "• `/set_backup` : Set a Secret Group as the Main Vault. All files are silently copied here.\n"
+            teks += "• `/stats` : Open the Database Dashboard.\n"
+            teks += "• `/set_gc <number>` : Set the auto-clean system.\n"
+            teks += "• Absolute authority across all groups.\n\n"
         
         teks += f"📞 *Need technical support? Contact:* {CONTACT_USERNAME}"
 
@@ -153,7 +156,7 @@ async def get_queue_ui(user_id, page=0):
     for i, item in enumerate(data):
         real_idx = start_idx + i + 1
         nama = html.escape(item['original_name'])
-        status = "Menunggu Nama" if item['status'] in ['naming', 'active_naming'] else "Menunggu Grup/Topik"
+        status = "Menunggu Diproses" if item['status'] in ['naming', 'active_naming'] else "Menunggu Grup/Topik"
         fid = item['file_unique_id']
         
         teks += f"<b>{real_idx}.</b> <code>{nama}</code>\n   └ <i>{status}</i>\n"
@@ -700,31 +703,6 @@ async def handle_group_media(message: Message):
             }).execute())
         except Exception: pass
 
-@dp.message(F.text)
-async def handle_naming(message: Message, state: FSMContext):
-    if await state.get_state() == LoginState.waiting_for_password: return
-    if message.chat.type != "private" or (message.text.startswith("/") and message.text != "/skip"): return
-    user_id, teks_user = message.from_user.id, message.text
-
-    try:
-        response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("user_id", user_id).eq("status", "active_naming").limit(1).execute())
-        if not response.data: response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("user_id", user_id).eq("status", "naming").limit(1).execute())
-        
-        if len(response.data) > 0:
-            antrean = response.data[0]
-            fid, nama_final = antrean['file_unique_id'], antrean['original_name'] if teks_user == "/skip" else teks_user
-            await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_final, "status": "selecting_topic"}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
-            
-            allowed_groups = await get_allowed_groups(message.bot, user_id)
-            if not allowed_groups: return await message.reply("⚠️ Anda tidak memiliki akses ke grup arsip manapun.", parse_mode="HTML")
-
-            builder = InlineKeyboardBuilder()
-            for grup in allowed_groups: builder.button(text=f"🏢 {grup['group_name']}", callback_data=f"grup_{grup['group_id']}_{fid}")
-            builder.adjust(1) 
-            await message.reply(f"Sip! 📝 Nama: <b>{html.escape(nama_final)}</b>\n\nMau dikirim ke <b>Grup</b> mana?", reply_markup=builder.as_markup(), parse_mode="HTML")
-        else: await message.reply("Nggak ada file yang butuh dikasih nama. Cek /queue.")
-    except Exception as e: await message.reply(f"Terjadi kesalahan: {e}")
-
 # ==========================================
 # 5. HANDLER TOMBOL UI
 # ==========================================
@@ -962,7 +940,7 @@ async def menu_detail_antrean(callback: CallbackQuery):
         if not response.data: return await callback.answer("File tidak ditemukan!", show_alert=True)
             
         item = response.data[0]
-        teks = f"📄 <b>PREVIEW FILE</b>\n\n<b>Nama Asli:</b> <code>{html.escape(item['original_name'])}</code>\n<b>Status:</b> <i>{'Menunggu Nama' if item['status'] in ['naming','active_naming'] else 'Menunggu Grup/Topik'}</i>"
+        teks = f"📄 <b>PREVIEW FILE</b>\n\n<b>Nama Asli:</b> <code>{html.escape(item['original_name'])}</code>\n<b>Status:</b> <i>{'Menunggu Diproses' if item['status'] in ['naming','active_naming'] else 'Menunggu Grup/Topik'}</i>"
         
         builder = InlineKeyboardBuilder()
         builder.button(text="➡️ Proses File Ini", callback_data=f"procq_{fid}")
@@ -986,30 +964,129 @@ async def kembali_ke_antrean(callback: CallbackQuery):
         await callback.message.answer(teks, reply_markup=markup, parse_mode="HTML") if markup else await callback.message.answer(teks, parse_mode="HTML")
     except Exception: await callback.answer("Gagal kembali.")
 
+
 # ==========================================
-# FITUR PROSES ANTREAN & CEK DUPLIKAT
+# WIZARD FLOW INTERAKTIF (Ganti Nama & Caption)
 # ==========================================
+
 async def proceed_queue_logic(callback: CallbackQuery, fid: str, user_id: int):
     response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
     if not response.data: return await callback.answer("File tidak ditemukan atau sudah diproses!", show_alert=True)
         
     antrean = response.data[0]
-    if antrean['status'] == "selecting_topic":
-        allowed_groups = await get_allowed_groups(callback.bot, user_id)
-        if not allowed_groups: return await callback.message.answer("Anda tidak memiliki akses grup manapun.")
-            
-        builder = InlineKeyboardBuilder()
-        for grup in allowed_groups: builder.button(text=f"🏢 {grup['group_name']}", callback_data=f"grup_{grup['group_id']}_{fid}")
-        builder.adjust(1)
-        await callback.message.edit_text(f"Melanjutkan file: <b>{html.escape(antrean['display_name'])}</b>\nMau dikirim ke <b>Grup</b> mana?", reply_markup=builder.as_markup(), parse_mode="HTML")
-    else:
-        await db_exec(lambda: supabase.table("upload_queue").update({"status": "naming"}).eq("user_id", user_id).eq("status", "active_naming").execute())
-        await db_exec(lambda: supabase.table("upload_queue").update({"status": "active_naming"}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
-        await callback.message.edit_text(f"🎯 <b>Fokus memproses:</b>\n<code>{html.escape(antrean['original_name'])}</code>\n\nSilakan balas dengan <b>Nama Baru</b> (atau ketik /skip).", parse_mode="HTML")
+    
+    # Memulai Wizard Langkah 1: Ganti Nama
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Ganti Nama", callback_data=f"askrn_yes_{fid}")
+    builder.button(text="⏭️ Skip", callback_data=f"askrn_no_{fid}")
+    builder.adjust(2)
+    
+    await callback.message.edit_text(f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{html.escape(antrean['original_name'])}</code>\n\nMau ganti nama file ini sebelum disimpan?", reply_markup=builder.as_markup(), parse_mode="HTML")
 
+@dp.callback_query(F.data.startswith("askrn_yes_"))
+async def wizard_rename_yes(callback: CallbackQuery, state: FSMContext):
+    fid = callback.data.replace("askrn_yes_", "")
+    await state.set_state(WizardState.waiting_for_rename)
+    await state.update_data(current_fid=fid)
+    await callback.message.edit_text("Silakan balas pesan ini dengan <b>Nama Baru</b> untuk file tersebut:", parse_mode="HTML")
+
+@dp.message(WizardState.waiting_for_rename, F.text)
+async def receive_wizard_rename(message: Message, state: FSMContext):
+    data = await state.get_data()
+    fid = data.get("current_fid")
+    user_id = message.from_user.id
+    nama_final = message.text
+    
+    # Update nama baru di DB
+    await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_final}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
+    await state.clear()
+    await ask_caption_visibility(message, fid)
+
+@dp.callback_query(F.data.startswith("askrn_no_"))
+async def wizard_rename_no(callback: CallbackQuery):
+    fid = callback.data.replace("askrn_no_", "")
+    user_id = callback.from_user.id
+    
+    # Gunakan nama asli
+    res = await db_exec(lambda: supabase.table("upload_queue").select("original_name").eq("file_unique_id", fid).eq("user_id", user_id).execute())
+    if res.data:
+        nama_asli = res.data[0]['original_name']
+        await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_asli}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
+    
+    await ask_caption_visibility(callback.message, fid, is_callback=True)
+
+async def ask_caption_visibility(message: Message, fid: str, is_callback=False):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👁️ Tampilkan", callback_data=f"capshow_yes_{fid}")
+    builder.button(text="🚫 Engga", callback_data=f"capshow_no_{fid}")
+    builder.adjust(2)
+    teks = "📝 <b>Langkah 2: Tampilan Caption</b>\nApakah Anda ingin menampilkan detail nama file di Caption grup tujuan?"
+    if is_callback:
+        await message.edit_text(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+    else:
+        await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("capshow_"))
+async def handle_caption_visibility(callback: CallbackQuery):
+    choice, fid = callback.data.replace("capshow_", "").split("_", 1)
+    # Simpan preferensi di cache memori
+    wizard_cache.setdefault(fid, {})['show_name'] = (choice == "yes")
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✍️ Tambah", callback_data=f"addcap_yes_{fid}")
+    builder.button(text="⏭️ Skip", callback_data=f"addcap_no_{fid}")
+    builder.adjust(2)
+    await callback.message.edit_text("📝 <b>Langkah 3: Caption Tambahan</b>\nMau nambahin caption teks manual di bawah file ini?", reply_markup=builder.as_markup(), parse_mode="HTML")
+
+@dp.callback_query(F.data.startswith("addcap_yes_"))
+async def ask_custom_caption(callback: CallbackQuery, state: FSMContext):
+    fid = callback.data.replace("addcap_yes_", "")
+    await state.set_state(WizardState.waiting_for_caption)
+    await state.update_data(current_fid=fid)
+    await callback.message.edit_text("Silakan balas pesan ini dengan <b>Caption Tambahan</b> Anda:", parse_mode="HTML")
+
+@dp.message(WizardState.waiting_for_caption, F.text)
+async def receive_custom_caption(message: Message, state: FSMContext):
+    data = await state.get_data()
+    fid = data.get("current_fid")
+    wizard_cache.setdefault(fid, {})['custom_cap'] = message.text
+    await state.clear()
+    await select_destination_group(message, fid, message.from_user.id)
+
+@dp.callback_query(F.data.startswith("addcap_no_"))
+async def skip_custom_caption(callback: CallbackQuery):
+    fid = callback.data.replace("addcap_no_", "")
+    wizard_cache.setdefault(fid, {})['custom_cap'] = ""
+    await select_destination_group(callback.message, fid, callback.from_user.id, is_callback=True)
+
+async def select_destination_group(message: Message, fid: str, user_id: int, is_callback=False):
+    allowed_groups = await get_allowed_groups(message.bot if is_callback else message.bot, user_id)
+    if not allowed_groups: 
+        teks = "⚠️ Anda tidak memiliki akses grup arsip manapun."
+        if is_callback: await message.edit_text(teks, parse_mode="HTML")
+        else: await message.answer(teks, parse_mode="HTML")
+        return
+        
+    builder = InlineKeyboardBuilder()
+    for grup in allowed_groups: builder.button(text=f"🏢 {grup['group_name']}", callback_data=f"grup_{grup['group_id']}_{fid}")
+    builder.adjust(1)
+    
+    # Update status di DB agar aman
+    await db_exec(lambda: supabase.table("upload_queue").update({"status": "selecting_topic"}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
+    
+    teks = "🎯 <b>Langkah Terakhir:</b>\nPilih <b>Grup Tujuan</b> penyimpanan arsip:"
+    if is_callback:
+        await message.edit_text(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+    else:
+        await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+# ==========================================
+# FLOW UTAMA PROSES ANTREAN & DUPLIKAT
+# ==========================================
 @dp.callback_query(F.data.startswith("procq_"))
 async def proses_antrean(callback: CallbackQuery):
-    fid, user_id = callback.data.replace("procq_", ""), callback.from_user.id
+    fid, user_id = callback.data.replace("procq_", ""), callback.fromuser.id if hasattr(callback, "fromuser") else callback.from_user.id
     
     try:
         cek_dup = await db_exec(lambda: supabase.table("files").select("*").eq("file_unique_id", fid).execute())
@@ -1245,7 +1322,17 @@ async def pilih_topik(callback: CallbackQuery):
         antrean = res.data[0]
         
         safe_display_name = html.escape(antrean['display_name'])
-        caption = f"📁 <b>{safe_display_name}</b>"
+        
+        # --- MENERAPKAN FORMAT WIZARD CAPTION ---
+        cache_data = wizard_cache.get(fid, {'show_name': True, 'custom_cap': ''})
+        caption_parts = []
+        if cache_data.get('show_name', True):
+            caption_parts.append(f"📁 <b>{safe_display_name}</b>")
+        if cache_data.get('custom_cap'):
+            caption_parts.append(f"📝 {html.escape(cache_data['custom_cap'])}")
+        
+        caption = "\n".join(caption_parts).strip()
+        # ----------------------------------------
 
         grp_id_int = int(antrean["group_id"])
         g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", grp_id_int).execute())
@@ -1283,7 +1370,17 @@ async def pilih_topik(callback: CallbackQuery):
 
                     if backup_thread_id:
                         sender_name = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.full_name
-                        caption_backup = f"📁 <b>{safe_display_name}</b>\n🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)"
+                        
+                        # --- CAPTIO BACKUP DISESUAIKAN JUGA ---
+                        caption_backup_parts = []
+                        if cache_data.get('show_name', True):
+                            caption_backup_parts.append(f"📁 <b>{safe_display_name}</b>")
+                        if cache_data.get('custom_cap'):
+                            caption_backup_parts.append(f"📝 {html.escape(cache_data['custom_cap'])}")
+                        
+                        caption_backup_parts.append(f"🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)")
+                        caption_backup = "\n".join(caption_backup_parts).strip()
+                        # --------------------------------------
 
                         if antrean['media_type'] == "document": await callback.bot.send_document(chat_id=backup_group_id_str, message_thread_id=backup_thread_id, document=antrean["file_id"], caption=caption_backup, parse_mode="HTML")
                         elif antrean['media_type'] == "photo": await callback.bot.send_photo(chat_id=backup_group_id_str, message_thread_id=backup_thread_id, photo=antrean["file_id"], caption=caption_backup, parse_mode="HTML")
@@ -1307,6 +1404,9 @@ async def pilih_topik(callback: CallbackQuery):
         user_res = await db_exec(lambda: supabase.table("users").select("role").eq("user_id", user_id).execute())
         is_superadmin = user_res.data and user_res.data[0].get('role') == 'superadmin'
         backup_msg = " & dibackup!" if is_superadmin and backup_group_id_str and str(antrean["group_id"]) != backup_group_id_str else ""
+
+        # Bersihkan memori cache sesudah berhasil
+        if fid in wizard_cache: del wizard_cache[fid]
 
         await callback.message.edit_text(f"🎉 <b>SUKSES!</b>\n\nFile <b>{safe_display_name}</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}", parse_mode="HTML")
         
@@ -1378,7 +1478,7 @@ async def main():
     
     # Menjalankan Background Tasks
     asyncio.create_task(queue_garbage_collector())
-    asyncio.create_task(run_web_server()) # Web Server nyala bareng bot
+    asyncio.create_task(run_web_server()) 
     
     print("Mengecek sistem... VaultAssist siap beroperasi! 🟢")
     await dp.start_polling(bot)
