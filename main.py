@@ -32,7 +32,7 @@ dp = Dispatcher()
 album_cache = {}
 last_upload_time = {}
 user_search_cache = {} 
-wizard_cache = {} # Cache buat menyimpan preferensi caption selama proses wizard berjalan
+wizard_cache = {} # Menyimpan ingatan bot soal caption di Wizard Flow
 
 class LoginState(StatesGroup):
     waiting_for_password = State()
@@ -981,7 +981,8 @@ async def proceed_queue_logic(callback: CallbackQuery, fid: str, user_id: int):
     builder.button(text="⏭️ Skip", callback_data=f"askrn_no_{fid}")
     builder.adjust(2)
     
-    await callback.message.edit_text(f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{html.escape(antrean['original_name'])}</code>\n\nMau ganti nama file ini sebelum disimpan?", reply_markup=builder.as_markup(), parse_mode="HTML")
+    # AMAN DARI ERROR TELEGRAM: Mengirim sebagai pesan baru (answer) karena pesan preview lama sudah dihapus
+    await callback.message.answer(f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{html.escape(antrean['original_name'])}</code>\n\nMau ganti nama file ini sebelum disimpan?", reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("askrn_yes_"))
 async def wizard_rename_yes(callback: CallbackQuery, state: FSMContext):
@@ -1086,7 +1087,7 @@ async def select_destination_group(message: Message, fid: str, user_id: int, is_
 # ==========================================
 @dp.callback_query(F.data.startswith("procq_"))
 async def proses_antrean(callback: CallbackQuery):
-    fid, user_id = callback.data.replace("procq_", ""), callback.fromuser.id if hasattr(callback, "fromuser") else callback.from_user.id
+    fid, user_id = callback.data.replace("procq_", ""), callback.from_user.id
     
     try:
         cek_dup = await db_exec(lambda: supabase.table("files").select("*").eq("file_unique_id", fid).execute())
@@ -1115,6 +1116,7 @@ async def proses_antrean(callback: CallbackQuery):
 
         try: await callback.message.delete()
         except: pass
+        # Memanggil logika Wizard tanpa menimbulkan error edit
         await proceed_queue_logic(callback, fid, user_id)
     except Exception as e: 
         print(f"Error procq: {e}")
@@ -1149,6 +1151,7 @@ async def force_proses_antrean(callback: CallbackQuery):
         
         try: await callback.message.delete()
         except: pass
+        # Memanggil logika Wizard tanpa menimbulkan error edit
         await proceed_queue_logic(callback, new_fid, user_id)
     except Exception as e:
         print(f"Error forceq: {e}")
@@ -1478,7 +1481,7 @@ async def main():
     
     # Menjalankan Background Tasks
     asyncio.create_task(queue_garbage_collector())
-    asyncio.create_task(run_web_server()) 
+    asyncio.create_task(run_web_server()) # Web Server nyala bareng bot
     
     print("Mengecek sistem... VaultAssist siap beroperasi! 🟢")
     await dp.start_polling(bot)
