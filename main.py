@@ -1196,12 +1196,14 @@ async def pilih_grup(callback: CallbackQuery):
         
         builder = InlineKeyboardBuilder()
         if not data_topik.data: 
-            builder.button(text="🔙 Kembali Pilih Grup", callback_data=f"procq_{fid}")
+            # FIX: Ganti procq_ jadi backgrup_
+            builder.button(text="🔙 Kembali Pilih Grup", callback_data=f"backgrup_{fid}")
             builder.adjust(1)
             return await callback.message.edit_text("⚠️ Grup ini belum punya Topik. Pilih grup lain!", reply_markup=builder.as_markup(), parse_mode="HTML")
 
         for topik in data_topik.data: builder.button(text=f"📂 {topik['topic_name']}", callback_data=f"topik_{topik['message_thread_id']}_{fid}")
-        builder.button(text="🔙 Kembali Pilih Grup", callback_data=f"procq_{fid}")
+        # FIX: Ganti procq_ jadi backgrup_
+        builder.button(text="🔙 Kembali Pilih Grup", callback_data=f"backgrup_{fid}")
         builder.adjust(1) 
         
         try: await callback.message.delete()
@@ -1210,6 +1212,13 @@ async def pilih_grup(callback: CallbackQuery):
         await callback.bot.send_message(chat_id=user_id, text="Mantap! 🏢 Grup dipilih.\n\nSekarang, pilih <b>Topik (Folder)</b> tujuannya:", reply_markup=builder.as_markup(), parse_mode="HTML")
     except Exception: await callback.answer("Gagal memproses", show_alert=True)
 
+# TAMBAHAN BARU: Handler buat nangkep tombol kembali ke grup
+@dp.callback_query(F.data.startswith("backgrup_"))
+async def kembali_pilih_grup(callback: CallbackQuery):
+    fid = callback.data.replace("backgrup_", "")
+    # Langsung panggil fungsi select_destination_group tanpa ngulang dari Langkah 1
+    await select_destination_group(callback.message, fid, callback.from_user.id, is_callback=True)
+    
 # ==========================================
 # FITUR BULK & SINGLE (SAFE DELETE)
 # ==========================================
