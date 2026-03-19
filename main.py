@@ -32,7 +32,7 @@ dp = Dispatcher()
 album_cache = {}
 last_upload_time = {}
 user_search_cache = {} 
-wizard_cache = {} # Menyimpan ingatan bot soal caption di Wizard Flow
+wizard_cache = {} # Cache untuk mengingat preferensi caption user
 
 class LoginState(StatesGroup):
     waiting_for_password = State()
@@ -337,7 +337,7 @@ async def save_language(callback: CallbackQuery):
         
         await send_help_instructions(callback.bot, callback.message.chat.id, user_id)
     except Exception as e:
-        await callback.answer("Gagal mengatur bahasa / Failed to set language.", show_alert=True)
+        await callback.answer("Gagal mengatur bahasa.", show_alert=True)
 
 @dp.message(Command("help"))
 async def help_cmd(message: Message):
@@ -970,19 +970,31 @@ async def kembali_ke_antrean(callback: CallbackQuery):
 # ==========================================
 
 async def proceed_queue_logic(callback: CallbackQuery, fid: str, user_id: int):
-    response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
-    if not response.data: return await callback.answer("File tidak ditemukan atau sudah diproses!", show_alert=True)
+    try:
+        response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
+        if not response.data: 
+            return await callback.answer("File tidak ditemukan atau sudah diproses!", show_alert=True)
+            
+        antrean = response.data[0]
         
-    antrean = response.data[0]
-    
-    # Memulai Wizard Langkah 1: Ganti Nama
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Ganti Nama", callback_data=f"askrn_yes_{fid}")
-    builder.button(text="⏭️ Skip", callback_data=f"askrn_no_{fid}")
-    builder.adjust(2)
-    
-    # AMAN DARI ERROR TELEGRAM: Mengirim sebagai pesan baru (answer) karena pesan preview lama sudah dihapus
-    await callback.message.answer(f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{html.escape(antrean['original_name'])}</code>\n\nMau ganti nama file ini sebelum disimpan?", reply_markup=builder.as_markup(), parse_mode="HTML")
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✏️ Ganti Nama", callback_data=f"askrn_yes_{fid}")
+        builder.button(text="⏭️ Skip", callback_data=f"askrn_no_{fid}")
+        builder.adjust(2)
+        
+        # Hapus pesan lama secara aman
+        try: await callback.message.delete()
+        except: pass
+        
+        safe_name = html.escape(antrean.get('original_name') or 'Unknown_File')
+        teks = f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{safe_name}</code>\n\nMau ganti nama file ini sebelum disimpan?"
+        
+        # 100% AMAN: Menggunakan bot.send_message langsung ke ID user, mengabaikan status pesan lama yang sudah dihapus
+        await callback.bot.send_message(chat_id=user_id, text=teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+        
+    except Exception as e:
+        print(f"Error proceed_queue: {e}")
+        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Langkah 1:</b>\n<code>{e}</code>", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("askrn_yes_"))
 async def wizard_rename_yes(callback: CallbackQuery, state: FSMContext):
@@ -998,7 +1010,6 @@ async def receive_wizard_rename(message: Message, state: FSMContext):
     user_id = message.from_user.id
     nama_final = message.text
     
-    # Update nama baru di DB
     await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_final}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
     await state.clear()
     await ask_caption_visibility(message, fid)
@@ -1008,7 +1019,6 @@ async def wizard_rename_no(callback: CallbackQuery):
     fid = callback.data.replace("askrn_no_", "")
     user_id = callback.from_user.id
     
-    # Gunakan nama asli
     res = await db_exec(lambda: supabase.table("upload_queue").select("original_name").eq("file_unique_id", fid).eq("user_id", user_id).execute())
     if res.data:
         nama_asli = res.data[0]['original_name']
@@ -1022,15 +1032,17 @@ async def ask_caption_visibility(message: Message, fid: str, is_callback=False):
     builder.button(text="🚫 Engga", callback_data=f"capshow_no_{fid}")
     builder.adjust(2)
     teks = "📝 <b>Langkah 2: Tampilan Caption</b>\nApakah Anda ingin menampilkan detail nama file di Caption grup tujuan?"
+    
     if is_callback:
-        await message.edit_text(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+        try: await message.delete()
+        except: pass
+        await message.bot.send_message(chat_id=message.chat.id, text=teks, reply_markup=builder.as_markup(), parse_mode="HTML")
     else:
         await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("capshow_"))
 async def handle_caption_visibility(callback: CallbackQuery):
     choice, fid = callback.data.replace("capshow_", "").split("_", 1)
-    # Simpan preferensi di cache memori
     wizard_cache.setdefault(fid, {})['show_name'] = (choice == "yes")
     
     builder = InlineKeyboardBuilder()
@@ -1072,12 +1084,13 @@ async def select_destination_group(message: Message, fid: str, user_id: int, is_
     for grup in allowed_groups: builder.button(text=f"🏢 {grup['group_name']}", callback_data=f"grup_{grup['group_id']}_{fid}")
     builder.adjust(1)
     
-    # Update status di DB agar aman
     await db_exec(lambda: supabase.table("upload_queue").update({"status": "selecting_topic"}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
     
     teks = "🎯 <b>Langkah Terakhir:</b>\nPilih <b>Grup Tujuan</b> penyimpanan arsip:"
     if is_callback:
-        await message.edit_text(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
+        try: await message.delete()
+        except: pass
+        await message.bot.send_message(chat_id=user_id, text=teks, reply_markup=builder.as_markup(), parse_mode="HTML")
     else:
         await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
 
@@ -1087,7 +1100,11 @@ async def select_destination_group(message: Message, fid: str, user_id: int, is_
 # ==========================================
 @dp.callback_query(F.data.startswith("procq_"))
 async def proses_antrean(callback: CallbackQuery):
-    fid, user_id = callback.data.replace("procq_", ""), callback.from_user.id
+    fid = callback.data.replace("procq_", "")
+    user_id = callback.from_user.id
+    
+    try: await callback.answer()
+    except: pass
     
     try:
         cek_dup = await db_exec(lambda: supabase.table("files").select("*").eq("file_unique_id", fid).execute())
@@ -1112,26 +1129,27 @@ async def proses_antrean(callback: CallbackQuery):
             except: pass
             
             album_cache[f"dup_{user_id}"] = fid
-            return await callback.message.answer(teks_dup, reply_markup=builder.as_markup(), parse_mode="HTML")
+            return await callback.bot.send_message(chat_id=user_id, text=teks_dup, reply_markup=builder.as_markup(), parse_mode="HTML")
 
-        try: await callback.message.delete()
-        except: pass
-        # Memanggil logika Wizard tanpa menimbulkan error edit
         await proceed_queue_logic(callback, fid, user_id)
+        
     except Exception as e: 
         print(f"Error procq: {e}")
-        await callback.answer(f"Gagal memproses file.", show_alert=True)
+        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Utama:</b>\n<code>{e}</code>", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("forceq_"))
 async def force_proses_antrean(callback: CallbackQuery):
     user_id = callback.from_user.id
     fid = album_cache.get(f"dup_{user_id}")
     
-    if not fid: return await callback.answer("Sesi kadaluarsa, silakan ulang dari /queue", show_alert=True)
+    try: await callback.answer()
+    except: pass
+    
+    if not fid: return await callback.bot.send_message(chat_id=user_id, text="Sesi kadaluarsa, silakan ulang dari /queue")
         
     try:
         q_res = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
-        if not q_res.data: return await callback.answer("Antrean tidak ditemukan!", show_alert=True)
+        if not q_res.data: return await callback.bot.send_message(chat_id=user_id, text="Antrean tidak ditemukan!")
         
         old_item = q_res.data[0]
         new_fid = f"c{int(time.time() % 100000)}_{fid[-5:]}"
@@ -1151,11 +1169,11 @@ async def force_proses_antrean(callback: CallbackQuery):
         
         try: await callback.message.delete()
         except: pass
-        # Memanggil logika Wizard tanpa menimbulkan error edit
+        
         await proceed_queue_logic(callback, new_fid, user_id)
     except Exception as e:
         print(f"Error forceq: {e}")
-        await callback.answer(f"Gagal menggandakan antrean.", show_alert=True)
+        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Gandakan:</b>\n<code>{e}</code>", parse_mode="HTML")
 
 @dp.callback_query(F.data.startswith("delq_"))
 async def hapus_antrean(callback: CallbackQuery):
@@ -1185,7 +1203,11 @@ async def pilih_grup(callback: CallbackQuery):
         for topik in data_topik.data: builder.button(text=f"📂 {topik['topic_name']}", callback_data=f"topik_{topik['message_thread_id']}_{fid}")
         builder.button(text="🔙 Kembali Pilih Grup", callback_data=f"procq_{fid}")
         builder.adjust(1) 
-        await callback.message.edit_text("Mantap! 🏢 Grup dipilih.\n\nSekarang, pilih <b>Topik (Folder)</b> tujuannya:", reply_markup=builder.as_markup(), parse_mode="HTML")
+        
+        try: await callback.message.delete()
+        except: pass
+        
+        await callback.bot.send_message(chat_id=user_id, text="Mantap! 🏢 Grup dipilih.\n\nSekarang, pilih <b>Topik (Folder)</b> tujuannya:", reply_markup=builder.as_markup(), parse_mode="HTML")
     except Exception: await callback.answer("Gagal memproses", show_alert=True)
 
 # ==========================================
@@ -1411,13 +1433,15 @@ async def pilih_topik(callback: CallbackQuery):
         # Bersihkan memori cache sesudah berhasil
         if fid in wizard_cache: del wizard_cache[fid]
 
-        await callback.message.edit_text(f"🎉 <b>SUKSES!</b>\n\nFile <b>{safe_display_name}</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}", parse_mode="HTML")
+        try: await callback.message.delete()
+        except: pass
+        await callback.bot.send_message(chat_id=user_id, text=f"🎉 <b>SUKSES!</b>\n\nFile <b>{safe_display_name}</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}", parse_mode="HTML")
         
         teks, markup = await get_queue_ui(callback.from_user.id)
-        if markup: await callback.message.answer(teks, reply_markup=markup, parse_mode="HTML")
+        if markup: await callback.bot.send_message(chat_id=user_id, text=teks, reply_markup=markup, parse_mode="HTML")
     except Exception as e: 
         print(f"Error single: {e}")
-        await callback.answer(f"Gagal memproses file. Terjadi kesalahan internal.", show_alert=True)
+        await callback.bot.send_message(chat_id=user_id, text=f"❌ Gagal memproses file. Terjadi kesalahan internal: {e}", parse_mode="HTML")
 
 # ==========================================
 # 6. GARBAGE COLLECTOR TUKANG SAPU
