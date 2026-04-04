@@ -1295,16 +1295,20 @@ async def bulk_eksekusi(callback: CallbackQuery):
     sender_name = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.full_name
 
     try:
-        # Data diurutkan sesuai upload
         antrean_list = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("user_id", user_id).order("created_at").execute())
         sukses = 0
+        skipped = 0 # TAMBAHAN: Counter buat ngitung file yang kembar
         berhasil_fids = []
         
         for item in antrean_list.data:
             fid, file_id, media_type = item['file_unique_id'], item['file_id'], item['media_type']
             
             cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).execute())
-            if cek_dup.data: fid = f"c{int(time.time() % 100000)}_{fid[-5:]}"
+            if cek_dup.data:
+                # LOGIKA BARU: Kalo duplikat, langsung skip dan hapus dari antrean
+                skipped += 1
+                berhasil_fids.append(item['file_unique_id'])
+                continue
 
             display_name = item['display_name'] if item['display_name'] else item['original_name']
             safe_display_name = html.escape(display_name)
@@ -1313,7 +1317,7 @@ async def bulk_eksekusi(callback: CallbackQuery):
             try:
                 sent_msg = None
                 success_send = False
-                # LOOP ANTI SPAM (Coba sampe 5 kali kalau kena limit)
+                # LOOP ANTI SPAM
                 for attempt in range(5):
                     try:
                         if media_type == "document": sent_msg = await callback.bot.send_document(chat_id=group_id_str, message_thread_id=msg_thread_id, document=file_id, caption=caption, parse_mode="HTML")
@@ -1357,7 +1361,6 @@ async def bulk_eksekusi(callback: CallbackQuery):
                         caption_backup = f"📁 <b>{safe_display_name}</b>\n🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)"
                         
                         if backup_thread_id:
-                            # LOOP ANTI SPAM buat Backup juga!
                             for attempt_b in range(5):
                                 try:
                                     if media_type == "document": await callback.bot.send_document(chat_id=backup_group_id_str, message_thread_id=backup_thread_id, document=file_id, caption=caption_backup, parse_mode="HTML")
@@ -1374,7 +1377,6 @@ async def bulk_eksekusi(callback: CallbackQuery):
                                         break
                     except Exception as e_bkp: print(f"Gagal backup bulk: {e_bkp}")
 
-                # Kalo grup asalnya emang udah grup backup, langsung anggep true
                 if str(group_id_str) == backup_group_id_str:
                     success_backup_flag = True
 
@@ -1392,7 +1394,6 @@ async def bulk_eksekusi(callback: CallbackQuery):
                 sukses += 1
                 berhasil_fids.append(item['file_unique_id']) 
 
-                # JEDA ANTI SPAM: Wajib ada biar Telegram gak ngambek
                 await asyncio.sleep(1.2)
 
             except Exception as e_kirim: 
@@ -1414,8 +1415,12 @@ async def bulk_eksekusi(callback: CallbackQuery):
         is_superadmin = user_res.data and user_res.data[0].get('role') == 'superadmin'
         backup_msg = " & dibackup (Sisa otomatis disync Daily)!" if is_superadmin and backup_group_id_str and str(group_id_str) != backup_group_id_str else ""
         
-        if sukses > 0:
-            await callback.message.edit_text(f"🎉 <b>PROSES MASSAL SELESAI!</b>\n\n✅ <b>{sukses} file</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}", parse_mode="HTML")
+        # LOGIKA PESAN HASIL LAPORAN BARU
+        if sukses > 0 or skipped > 0:
+            msg_akhir = f"🎉 <b>PROSES MASSAL SELESAI!</b>\n\n✅ <b>{sukses} file</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}"
+            if skipped > 0:
+                msg_akhir += f"\n⏭️ <b>{skipped} file</b> otomatis di-skip karena duplikat."
+            await callback.message.edit_text(msg_akhir, parse_mode="HTML")
         else:
             await callback.message.edit_text(f"❌ <b>SEMUA FILE GAGAL DIKIRIM!</b>\n\n<i>Tenang, file lu masih aman di antrean. Cek koneksi atau izin bot lu.</i>", parse_mode="HTML")
     except Exception as e: 
