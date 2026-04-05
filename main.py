@@ -32,15 +32,10 @@ dp = Dispatcher()
 album_cache = {}
 last_upload_time = {}
 user_search_cache = {} 
-wizard_cache = {} 
 backup_thread_cache = {} 
 
 class LoginState(StatesGroup):
     waiting_for_password = State()
-
-class WizardState(StatesGroup):
-    waiting_for_rename = State()
-    waiting_for_caption = State()
 
 async def db_exec(query_func):
     return await asyncio.to_thread(query_func)
@@ -84,8 +79,8 @@ async def send_help_instructions(bot: Bot, chat_id: int, user_id: int):
         teks += "*Cara Mengarsipkan File (Upload):*\n"
         teks += "1️⃣ Kirim file, foto, atau dokumen secara langsung (Japri) ke chat bot ini.\n"
         teks += "2️⃣ Ketik `/queue` untuk membuka keranjang antrean file Anda.\n"
-        teks += "3️⃣ Klik tombol **➡️ Proses File Ini**, lalu ikuti panduan pengaturan (Ganti Nama, Tampilkan Caption, Tambah Caption Tambahan).\n"
-        teks += "4️⃣ Pilih *Grup* dan *Topik (Folder)* tujuannya. File otomatis terkirim & tersimpan!\n\n"
+        teks += "3️⃣ Klik tombol **➡️ Proses File Ini**, lalu pilih Grup & Topik tujuannya.\n"
+        teks += "4️⃣ File otomatis terkirim & tersimpan secara instan!\n\n"
         teks += "*Cara Mencari File (Download):*\n"
         teks += "• Ketik `/files` untuk menelusuri arsip layaknya membuka folder di komputer.\n"
         teks += "• Ketik `/search <kata_kunci>` untuk mencari nama file dengan cepat.\n\n"
@@ -94,42 +89,31 @@ async def send_help_instructions(bot: Bot, chat_id: int, user_id: int):
         teks += "• **Setup Awal:** Masukkan bot ini ke grup Telegram Anda dan pastikan menjadikannya Admin.\n"
         teks += "• **Auto-Folder:** Setiap Anda membuat *Topik* baru di grup Telegram, bot akan otomatis mencatatnya sebagai Folder Arsip.\n"
         teks += "• **Atur Hak Akses:** Ketik `/group_settings on` di dalam grup agar *member biasa* diizinkan menyimpan file ke grup tersebut via bot.\n"
-        teks += "• **CCTV Otomatis:** Setiap media yang dikirim langsung di dalam grup akan otomatis diarsipkan.\n\n"
+        teks += "• **CCTV Otomatis:** Setiap media yang dikirim di grup akan otomatis diarsipkan.\n\n"
 
         if is_superadmin:
             teks += "👑 **3. PANDUAN SUPER ADMIN (SUDO)**\n"
-            teks += "• `/set_backup` : Ketik perintah ini di *Grup Rahasia* Anda untuk menjadikannya Brankas Utama. Semua file dari grup mana pun akan di-copy ke sini diam-diam.\n"
+            teks += "• `/set_backup` : Set Grup Rahasia Anda sebagai Brankas Utama (Ketik di grup).\n"
             teks += "• `/stats` : Buka Dashboard untuk melihat statistik Database.\n"
-            teks += "• `/set_gc <angka>` : Atur sistem pembersih otomatis.\n"
-            teks += "• Anda memiliki wewenang penuh pada arsip lintas grup.\n\n"
+            teks += "• `/set_gc <angka>` : Atur sistem pembersih otomatis.\n\n"
         
         teks += f"📞 *Butuh bantuan teknis? Hubungi:* {CONTACT_USERNAME}"
     else:
         teks = "📚 **GROUP VAULT ASSISTANT USER GUIDE**\n\n"
         teks += "👤 **1. REGULAR USER GUIDE**\n"
-        teks += "*How to Archive a File (Upload):*\n"
-        teks += "1️⃣ Send a file, photo, or document directly (DM) to this bot.\n"
+        teks += "1️⃣ Send a file, photo, or document directly to this bot.\n"
         teks += "2️⃣ Type `/queue` to open your upload queue.\n"
-        teks += "3️⃣ Click **➡️ Process This File**, then follow the setup wizard (Rename, Show Caption, Add Custom Caption).\n"
-        teks += "4️⃣ Select the destination *Group* and *Topic (Folder)*. The file will be sent & saved!\n\n"
-        teks += "*How to Find a File (Download):*\n"
+        teks += "3️⃣ Click **➡️ Process This File**, then select Destination Group & Topic.\n\n"
         teks += "• Type `/files` to browse archives.\n"
         teks += "• Type `/search <keyword>` to quickly find a file.\n\n"
         
-        teks += "👮 **2. GROUP ADMIN GUIDE**\n"
-        teks += "• **Initial Setup:** Add this bot to your Telegram group and promote it to Admin.\n"
-        teks += "• **Auto-Folder:** New Topics in the group are automatically registered as Archive Folders.\n"
-        teks += "• **Set Permissions:** Type `/group_settings on` inside the group to allow members to upload.\n"
-        teks += "• **Auto-CCTV:** Media sent directly in the group is automatically archived.\n\n"
-
         if is_superadmin:
             teks += "👑 **3. SUPER ADMIN GUIDE (SUDO)**\n"
-            teks += "• `/set_backup` : Set a Secret Group as the Main Vault. All files are silently copied here.\n"
-            teks += "• `/stats` : Open the Database Dashboard.\n"
-            teks += "• `/set_gc <number>` : Set the auto-clean system.\n"
-            teks += "• Absolute authority across all groups.\n\n"
+            teks += "• `/set_backup` : Set a Secret Group as the Main Vault.\n"
+            teks += "• `/stats` : Open Database Dashboard.\n"
+            teks += "• `/set_gc <number>` : Set auto-clean system.\n\n"
         
-        teks += f"📞 *Need technical support? Contact:* {CONTACT_USERNAME}"
+        teks += f"📞 *Need support? Contact:* {CONTACT_USERNAME}"
 
     await bot.send_message(chat_id=chat_id, text=teks, parse_mode="Markdown")
 
@@ -157,7 +141,7 @@ async def get_queue_ui(user_id, page=0):
     for i, item in enumerate(data):
         real_idx = start_idx + i + 1
         nama = html.escape(item['original_name'])
-        status = "Menunggu Diproses" if item['status'] in ['naming', 'active_naming'] else "Menunggu Grup/Topik"
+        status = "Menunggu Grup/Topik"
         fid = item['file_unique_id']
         
         teks += f"<b>{real_idx}.</b> <code>{nama}</code>\n   └ <i>{status}</i>\n"
@@ -583,7 +567,7 @@ async def set_group_privacy(message: Message, command: CommandObject):
     except Exception as e: await message.reply(f"❌ Error: {e}")
 
 # ==========================================
-# 4. HANDLER UPLOAD MEDIA
+# 4. HANDLER UPLOAD MEDIA (PRIVATE & GRUP/CCTV)
 # ==========================================
 
 @dp.message(F.chat.type == "private", F.document | F.photo | F.video | F.audio | F.voice)
@@ -605,12 +589,6 @@ async def handle_private_media(message: Message):
         ext = os.path.splitext(nama_file)[1].lower()
         if ext in BLACKLIST_EXT:
             await message.reply("⛔ <b>AKSES DITOLAK!</b>\nFormat file ini berbahaya dan dilarang masuk ke sistem arsip demi keamanan.", parse_mode="HTML")
-            bg_res = await db_exec(lambda: supabase.table("bot_settings").select("setting_value").eq("setting_key", "backup_group_id").execute())
-            if bg_res.data:
-                backup_group_id_str = bg_res.data[0]['setting_value']
-                warning_caption = f"🚨 <b>WARNING: DANGEROUS FILE BLOCKED</b>\nUser: @{message.from_user.username or message.from_user.id}\nFile: {html.escape(nama_file)}\n<i>File ditolak di antrean japri, tapi diamankan di sini sebagai bukti.</i>"
-                try: await message.bot.send_document(chat_id=backup_group_id_str, document=file_id, caption=warning_caption, parse_mode="HTML")
-                except Exception: pass
             return 
 
     try:
@@ -627,10 +605,10 @@ async def handle_private_media(message: Message):
             if current_time - last_time < 1.5: pass 
             else:
                 builder = InlineKeyboardBuilder()
-                builder.button(text="➡️ Teruskan", callback_data=f"procq_{file_unique_id}")
+                builder.button(text="➡️ Proses File Ini", callback_data=f"procq_{file_unique_id}")
                 builder.button(text="❌ Hapus", callback_data=f"delq_{file_unique_id}")
                 builder.adjust(2) 
-                await message.reply(f"📥 <b>File Diterima!</b>\n📄 <code>{html.escape(nama_file)}</code>\n<i>Klik <b>Teruskan</b> atau buka /queue.</i>", reply_markup=builder.as_markup(), parse_mode="HTML")
+                await message.reply(f"📥 <b>File Diterima!</b>\n📄 <code>{html.escape(nama_file)}</code>", reply_markup=builder.as_markup(), parse_mode="HTML")
         last_upload_time[user_id] = current_time
     except Exception as e: print(f"Error insert queue: {e}")
 
@@ -657,19 +635,38 @@ async def handle_group_media(message: Message):
         nama_file = f"Voice_{time.strftime('%Y%m%d_%H%M%S')}_{file_unique_id[-4:]}.ogg"
 
     msg_id = message.message_id
-    success_backup_flag = False
-
+    
     if media_type == "document":
         ext = os.path.splitext(nama_file)[1].lower()
         if ext in BLACKLIST_EXT:
             try: await message.delete()
             except Exception: pass
-            
-            if backup_group_id_str:
-                warning_caption = f"🚨 <b>WARNING: DANGEROUS FILE AUTO-DELETED!</b>\nGrup Asal: {message.chat.title}\nUser: @{message.from_user.username or message.from_user.id}\nFile: {html.escape(nama_file)}\n<i>File berbahaya ini telah dihapus dari grup asalnya, dan diamankan di sini sebagai bukti.</i>"
-                try: await message.bot.send_document(chat_id=backup_group_id_str, document=file_id, caption=warning_caption, parse_mode="HTML")
-                except Exception: pass
             return 
+
+    # --- LOGIKA DETEKSI DUPLIKAT CCTV PER TOPIK ---
+    cek_dup = await db_exec(lambda: supabase.table("files").select("message_id").eq("file_unique_id", file_unique_id).eq("group_id", source_group_id).eq("message_thread_id", source_thread_id).execute())
+    
+    if cek_dup.data:
+        old_msg_id = cek_dup.data[0].get('message_id')
+        if old_msg_id:
+            chat_id_clean = str(source_group_id).replace("-100", "")
+            if message.chat.username:
+                link = f"https://t.me/{message.chat.username}/{old_msg_id}"
+            else:
+                if source_thread_id != 0:
+                    link = f"https://t.me/c/{chat_id_clean}/{source_thread_id}/{old_msg_id}"
+                else:
+                    link = f"https://t.me/c/{chat_id_clean}/{old_msg_id}"
+                
+            teks_warn = f"⚠️ **PERINGATAN DUPLIKASI!**\nMedia ini sudah pernah dikirim sebelumnya di topik ini pada pesan berikut:\n🔗 <a href='{link}'>Lihat Pesan Lama</a>\n\n<i>Note: Yang dibackup ke Brankas Utama adalah file yang tidak kalian hapus. Silakan hapus pesan duplikat ini!</i>"
+            
+            # Reply peringatan ke file baru
+            await message.reply(teks_warn, parse_mode="HTML", disable_web_page_preview=True)
+            
+        # PENTING: Karena ini duplikat, jangan dibackup lagi dan jangan ditimpa lognya
+        return
+
+    success_backup_flag = False
 
     if backup_group_id_str:
         try:
@@ -721,7 +718,7 @@ async def handle_group_media(message: Message):
     cek_topik = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", source_group_id).eq("message_thread_id", source_thread_id).execute())
     if cek_topik.data:
         try:
-            await db_exec(lambda: supabase.table("files").upsert({
+            await db_exec(lambda: supabase.table("files").insert({
                 "file_unique_id": file_unique_id, 
                 "file_id": file_id, 
                 "display_name": nama_file, 
@@ -731,10 +728,10 @@ async def handle_group_media(message: Message):
                 "message_id": msg_id,
                 "is_backed_up": success_backup_flag
             }).execute())
-        except Exception as err_db: print(f"Error simpan DB (Pastikan kolom is_backed_up udah dibikin di Supabase!): {err_db}")
+        except Exception as err_db: print(f"Error simpan DB CCTV: {err_db}")
 
 # ==========================================
-# 5. HANDLER TOMBOL UI
+# 5. HANDLER TOMBOL UI (SINGLE & BULK)
 # ==========================================
 
 @dp.callback_query(F.data == "list_groups")
@@ -994,112 +991,9 @@ async def kembali_ke_antrean(callback: CallbackQuery):
         await callback.message.answer(teks, reply_markup=markup, parse_mode="HTML") if markup else await callback.message.answer(teks, parse_mode="HTML")
     except Exception: await callback.answer("Gagal kembali.")
 
-
 # ==========================================
-# WIZARD FLOW INTERAKTIF (Ganti Nama & Caption)
+# FLOW UPLOAD SINGLE & BULK
 # ==========================================
-
-async def proceed_queue_logic(callback: CallbackQuery, fid: str, user_id: int):
-    try:
-        response = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
-        if not response.data: 
-            return await callback.answer("File tidak ditemukan atau sudah diproses!", show_alert=True)
-            
-        antrean = response.data[0]
-        
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✏️ Ganti Nama", callback_data=f"askrn_yes_{fid}")
-        builder.button(text="⏭️ Skip", callback_data=f"askrn_no_{fid}")
-        builder.adjust(2)
-        
-        try: await callback.message.delete()
-        except: pass
-        
-        safe_name = html.escape(antrean.get('original_name') or 'Unknown_File')
-        teks = f"📝 <b>Langkah 1: Ganti Nama</b>\nFile Asli: <code>{safe_name}</code>\n\nMau ganti nama file ini sebelum disimpan?"
-        
-        await callback.bot.send_message(chat_id=user_id, text=teks, reply_markup=builder.as_markup(), parse_mode="HTML")
-        
-    except Exception as e:
-        print(f"Error proceed_queue: {e}")
-        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Langkah 1:</b>\n<code>{e}</code>", parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("askrn_yes_"))
-async def wizard_rename_yes(callback: CallbackQuery, state: FSMContext):
-    fid = callback.data.replace("askrn_yes_", "")
-    await state.set_state(WizardState.waiting_for_rename)
-    await state.update_data(current_fid=fid)
-    await callback.message.edit_text("Silakan balas pesan ini dengan <b>Nama Baru</b> untuk file tersebut:", parse_mode="HTML")
-
-@dp.message(WizardState.waiting_for_rename, F.text)
-async def receive_wizard_rename(message: Message, state: FSMContext):
-    data = await state.get_data()
-    fid = data.get("current_fid")
-    user_id = message.from_user.id
-    nama_final = message.text
-    
-    await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_final}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
-    await state.clear()
-    await ask_caption_visibility(message, fid)
-
-@dp.callback_query(F.data.startswith("askrn_no_"))
-async def wizard_rename_no(callback: CallbackQuery):
-    fid = callback.data.replace("askrn_no_", "")
-    user_id = callback.from_user.id
-    
-    res = await db_exec(lambda: supabase.table("upload_queue").select("original_name").eq("file_unique_id", fid).eq("user_id", user_id).execute())
-    if res.data:
-        nama_asli = res.data[0]['original_name']
-        await db_exec(lambda: supabase.table("upload_queue").update({"display_name": nama_asli}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
-    
-    await ask_caption_visibility(callback.message, fid, is_callback=True)
-
-async def ask_caption_visibility(message: Message, fid: str, is_callback=False):
-    builder = InlineKeyboardBuilder()
-    builder.button(text="👁️ Tampilkan", callback_data=f"capshow_yes_{fid}")
-    builder.button(text="🚫 Engga", callback_data=f"capshow_no_{fid}")
-    builder.adjust(2)
-    teks = "📝 <b>Langkah 2: Tampilan Caption</b>\nApakah Anda ingin menampilkan detail nama file di Caption grup tujuan?"
-    
-    if is_callback:
-        try: await message.delete()
-        except: pass
-        await message.bot.send_message(chat_id=message.chat.id, text=teks, reply_markup=builder.as_markup(), parse_mode="HTML")
-    else:
-        await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("capshow_"))
-async def handle_caption_visibility(callback: CallbackQuery):
-    choice, fid = callback.data.replace("capshow_", "").split("_", 1)
-    wizard_cache.setdefault(fid, {})['show_name'] = (choice == "yes")
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✍️ Tambah", callback_data=f"addcap_yes_{fid}")
-    builder.button(text="⏭️ Skip", callback_data=f"addcap_no_{fid}")
-    builder.adjust(2)
-    await callback.message.edit_text("📝 <b>Langkah 3: Caption Tambahan</b>\nMau nambahin caption teks manual di bawah file ini?", reply_markup=builder.as_markup(), parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("addcap_yes_"))
-async def ask_custom_caption(callback: CallbackQuery, state: FSMContext):
-    fid = callback.data.replace("addcap_yes_", "")
-    await state.set_state(WizardState.waiting_for_caption)
-    await state.update_data(current_fid=fid)
-    await callback.message.edit_text("Silakan balas pesan ini dengan <b>Caption Tambahan</b> Anda:", parse_mode="HTML")
-
-@dp.message(WizardState.waiting_for_caption, F.text)
-async def receive_custom_caption(message: Message, state: FSMContext):
-    data = await state.get_data()
-    fid = data.get("current_fid")
-    wizard_cache.setdefault(fid, {})['custom_cap'] = message.text
-    await state.clear()
-    await select_destination_group(message, fid, message.from_user.id)
-
-@dp.callback_query(F.data.startswith("addcap_no_"))
-async def skip_custom_caption(callback: CallbackQuery):
-    fid = callback.data.replace("addcap_no_", "")
-    wizard_cache.setdefault(fid, {})['custom_cap'] = ""
-    await select_destination_group(callback.message, fid, callback.from_user.id, is_callback=True)
-
 async def select_destination_group(message: Message, fid: str, user_id: int, is_callback=False):
     allowed_groups = await get_allowed_groups(message.bot if is_callback else message.bot, user_id)
     if not allowed_groups: 
@@ -1114,7 +1008,7 @@ async def select_destination_group(message: Message, fid: str, user_id: int, is_
     
     await db_exec(lambda: supabase.table("upload_queue").update({"status": "selecting_topic"}).eq("file_unique_id", fid).eq("user_id", user_id).execute())
     
-    teks = "🎯 <b>Langkah Terakhir:</b>\nPilih <b>Grup Tujuan</b> penyimpanan arsip:"
+    teks = "🎯 <b>Pilih Grup Tujuan:</b>"
     if is_callback:
         try: await message.delete()
         except: pass
@@ -1123,85 +1017,15 @@ async def select_destination_group(message: Message, fid: str, user_id: int, is_
         await message.answer(teks, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
-# ==========================================
-# FLOW UTAMA PROSES ANTREAN & DUPLIKAT
-# ==========================================
 @dp.callback_query(F.data.startswith("procq_"))
-async def proses_antrean(callback: CallbackQuery):
+async def proses_antrean_single(callback: CallbackQuery):
     fid = callback.data.replace("procq_", "")
     user_id = callback.from_user.id
-    
     try: await callback.answer()
     except: pass
     
-    try:
-        cek_dup = await db_exec(lambda: supabase.table("files").select("*").eq("file_unique_id", fid).execute())
-        if cek_dup.data:
-            dup = cek_dup.data[0]
-            g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", dup['group_id']).execute())
-            g_name = g_res.data[0]['group_name'] if g_res.data else "Grup Tidak Diketahui"
-            
-            t_name = "General / Tidak Terdaftar"
-            if dup.get('message_thread_id') and dup['message_thread_id'] != 0:
-                t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", dup['group_id']).eq("message_thread_id", dup['message_thread_id']).execute())
-                if t_res.data: t_name = t_res.data[0]['topic_name']
-
-            teks_dup = f"⚠️ <b>DUPLIKAT TERDETEKSI!</b>\n\nFile ini persis dengan yang sudah pernah lu kirim ke:\n🏢 <b>{g_name}</b>\n📂 Topik: <b>{t_name}</b>\n\n<i>Kalo lu lanjut, file ini bakal dicopy/digandakan. Mau tetep lanjut?</i>"
-            
-            builder = InlineKeyboardBuilder()
-            builder.button(text="✅ Lanjut (Gandakan)", callback_data=f"forceq_{fid[-15:]}") 
-            builder.button(text="❌ Nggak Jadi", callback_data=f"delq_{fid}")
-            builder.adjust(1)
-            
-            try: await callback.message.delete()
-            except: pass
-            
-            album_cache[f"dup_{user_id}"] = fid
-            return await callback.bot.send_message(chat_id=user_id, text=teks_dup, reply_markup=builder.as_markup(), parse_mode="HTML")
-
-        await proceed_queue_logic(callback, fid, user_id)
-        
-    except Exception as e: 
-        print(f"Error procq: {e}")
-        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Utama:</b>\n<code>{e}</code>", parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("forceq_"))
-async def force_proses_antrean(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    fid = album_cache.get(f"dup_{user_id}")
-    
-    try: await callback.answer()
-    except: pass
-    
-    if not fid: return await callback.bot.send_message(chat_id=user_id, text="Sesi kadaluarsa, silakan ulang dari /queue")
-        
-    try:
-        q_res = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
-        if not q_res.data: return await callback.bot.send_message(chat_id=user_id, text="Antrean tidak ditemukan!")
-        
-        old_item = q_res.data[0]
-        new_fid = f"c{int(time.time() % 100000)}_{fid[-5:]}"
-        
-        await db_exec(lambda: supabase.table("upload_queue").insert({
-            "user_id": user_id, 
-            "file_unique_id": new_fid, 
-            "file_id": old_item['file_id'],
-            "media_type": old_item['media_type'], 
-            "original_name": old_item['original_name'],
-            "display_name": old_item.get('display_name'), 
-            "status": old_item['status'], 
-            "group_id": old_item.get('group_id')
-        }).execute())
-        
-        await db_exec(lambda: supabase.table("upload_queue").delete().eq("file_unique_id", fid).eq("user_id", user_id).execute())
-        
-        try: await callback.message.delete()
-        except: pass
-        
-        await proceed_queue_logic(callback, new_fid, user_id)
-    except Exception as e:
-        print(f"Error forceq: {e}")
-        await callback.bot.send_message(chat_id=user_id, text=f"❌ <b>Error Gandakan:</b>\n<code>{e}</code>", parse_mode="HTML")
+    # Langsung skip wizard dan suruh pilih grup!
+    await select_destination_group(callback.message, fid, user_id, is_callback=True)
 
 @dp.callback_query(F.data.startswith("delq_"))
 async def hapus_antrean(callback: CallbackQuery):
@@ -1243,9 +1067,6 @@ async def kembali_pilih_grup(callback: CallbackQuery):
     fid = callback.data.replace("backgrup_", "")
     await select_destination_group(callback.message, fid, callback.from_user.id, is_callback=True)
 
-# ==========================================
-# FITUR BULK & SINGLE (SAFE DELETE & ANTI SPAM)
-# ==========================================
 @dp.callback_query(F.data == "bulk_start")
 async def bulk_start(callback: CallbackQuery):
     allowed_groups = await get_allowed_groups(callback.bot, callback.from_user.id)
@@ -1297,15 +1118,15 @@ async def bulk_eksekusi(callback: CallbackQuery):
     try:
         antrean_list = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("user_id", user_id).order("created_at").execute())
         sukses = 0
-        skipped = 0 # TAMBAHAN: Counter buat ngitung file yang kembar
+        skipped = 0
         berhasil_fids = []
         
         for item in antrean_list.data:
             fid, file_id, media_type = item['file_unique_id'], item['file_id'], item['media_type']
             
-            cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).execute())
+            # --- CEK DUPLIKAT PER TOPIK ---
+            cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).eq("group_id", int(group_id_str)).eq("message_thread_id", msg_thread_id or 0).execute())
             if cek_dup.data:
-                # LOGIKA BARU: Kalo duplikat, langsung skip dan hapus dari antrean
                 skipped += 1
                 berhasil_fids.append(item['file_unique_id'])
                 continue
@@ -1317,7 +1138,6 @@ async def bulk_eksekusi(callback: CallbackQuery):
             try:
                 sent_msg = None
                 success_send = False
-                # LOOP ANTI SPAM
                 for attempt in range(5):
                     try:
                         if media_type == "document": sent_msg = await callback.bot.send_document(chat_id=group_id_str, message_thread_id=msg_thread_id, document=file_id, caption=caption, parse_mode="HTML")
@@ -1329,13 +1149,10 @@ async def bulk_eksekusi(callback: CallbackQuery):
                         success_send = True
                         break 
                     except Exception as ret_err:
-                        if "429" in str(ret_err) or "Too Many" in str(ret_err):
-                            await asyncio.sleep(4)
-                        else:
-                            raise ret_err
+                        if "429" in str(ret_err) or "Too Many" in str(ret_err): await asyncio.sleep(4)
+                        else: raise ret_err
                 
-                if not success_send:
-                    continue
+                if not success_send: continue
 
                 msg_id = sent_msg.message_id if sent_msg else None
                 success_backup_flag = False
@@ -1348,15 +1165,12 @@ async def bulk_eksekusi(callback: CallbackQuery):
                         else:
                             map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", int(group_id_str)).execute())
                             backup_thread_id = None
-                            if map_res.data: 
-                                backup_thread_id = map_res.data[0]['backup_thread_id']
+                            if map_res.data: backup_thread_id = map_res.data[0]['backup_thread_id']
                             else:
                                 new_topic = await callback.bot.create_forum_topic(chat_id=backup_group_id_str, name=g_name)
                                 backup_thread_id = new_topic.message_thread_id
                                 await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": int(group_id_str), "backup_thread_id": backup_thread_id}).execute())
-                            
-                            if backup_thread_id:
-                                backup_thread_cache[cache_key] = backup_thread_id
+                            if backup_thread_id: backup_thread_cache[cache_key] = backup_thread_id
                         
                         caption_backup = f"📁 <b>{safe_display_name}</b>\n🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)"
                         
@@ -1371,29 +1185,15 @@ async def bulk_eksekusi(callback: CallbackQuery):
                                     success_backup_flag = True
                                     break
                                 except Exception as err_b:
-                                    if "429" in str(err_b) or "Too Many" in str(err_b):
-                                        await asyncio.sleep(4)
-                                    else:
-                                        break
+                                    if "429" in str(err_b) or "Too Many" in str(err_b): await asyncio.sleep(4)
+                                    else: break
                     except Exception as e_bkp: print(f"Gagal backup bulk: {e_bkp}")
 
-                if str(group_id_str) == backup_group_id_str:
-                    success_backup_flag = True
+                if str(group_id_str) == backup_group_id_str: success_backup_flag = True
 
-                await db_exec(lambda: supabase.table("files").insert({
-                    "file_unique_id": fid, 
-                    "file_id": file_id, 
-                    "display_name": display_name, 
-                    "media_type": media_type, 
-                    "group_id": group_id_str, 
-                    "message_thread_id": int(thread_id_str), 
-                    "message_id": msg_id,
-                    "is_backed_up": success_backup_flag
-                }).execute())
-                
+                await db_exec(lambda: supabase.table("files").insert({"file_unique_id": fid, "file_id": file_id, "display_name": display_name, "media_type": media_type, "group_id": group_id_str, "message_thread_id": int(thread_id_str), "message_id": msg_id, "is_backed_up": success_backup_flag}).execute())
                 sukses += 1
                 berhasil_fids.append(item['file_unique_id']) 
-
                 await asyncio.sleep(1.2)
 
             except Exception as e_kirim: 
@@ -1405,7 +1205,6 @@ async def bulk_eksekusi(callback: CallbackQuery):
                     await db_exec(lambda: supabase.table("groups").delete().eq("group_id", group_id_str).execute())
                     await db_exec(lambda: supabase.table("topics").delete().eq("group_id", group_id_str).execute())
                     return await callback.message.edit_text("❌ <b>GAGAL: GRUP SUDAH TIDAK ADA/AKSES DITOLAK!</b>", parse_mode="HTML")
-                print(f"Error ngirim massal (skip 1 file): {e_kirim}")
 
         if berhasil_fids:
             for bf in berhasil_fids:
@@ -1413,16 +1212,14 @@ async def bulk_eksekusi(callback: CallbackQuery):
         
         user_res = await db_exec(lambda: supabase.table("users").select("role").eq("user_id", user_id).execute())
         is_superadmin = user_res.data and user_res.data[0].get('role') == 'superadmin'
-        backup_msg = " & dibackup (Sisa otomatis disync Daily)!" if is_superadmin and backup_group_id_str and str(group_id_str) != backup_group_id_str else ""
+        backup_msg = " & dibackup (Sisa disync Daily)!" if is_superadmin and backup_group_id_str and str(group_id_str) != backup_group_id_str else ""
         
-        # LOGIKA PESAN HASIL LAPORAN BARU
         if sukses > 0 or skipped > 0:
             msg_akhir = f"🎉 <b>PROSES MASSAL SELESAI!</b>\n\n✅ <b>{sukses} file</b> berhasil dikirim ke <b>{g_name}</b> (Topik: {t_name}){backup_msg}"
-            if skipped > 0:
-                msg_akhir += f"\n⏭️ <b>{skipped} file</b> otomatis di-skip karena duplikat."
+            if skipped > 0: msg_akhir += f"\n⏭️ <b>{skipped} file</b> otomatis di-skip karena sudah ada di topik tersebut."
             await callback.message.edit_text(msg_akhir, parse_mode="HTML")
         else:
-            await callback.message.edit_text(f"❌ <b>SEMUA FILE GAGAL DIKIRIM!</b>\n\n<i>Tenang, file lu masih aman di antrean. Cek koneksi atau izin bot lu.</i>", parse_mode="HTML")
+            await callback.message.edit_text(f"❌ <b>SEMUA FILE GAGAL DIKIRIM!</b>", parse_mode="HTML")
     except Exception as e: 
         print(f"Error Bulk: {e}")
         await callback.answer(f"Gagal memproses bulk.", show_alert=True)
@@ -1431,32 +1228,31 @@ async def bulk_eksekusi(callback: CallbackQuery):
 async def pilih_topik(callback: CallbackQuery):
     thread_id_str, fid = callback.data[6:].split("_", 1)
     msg_thread_id = int(thread_id_str) if int(thread_id_str) != 0 else None
+    grp_id_int = int(callback.message.reply_markup.inline_keyboard[0][0].callback_data.split("_")[2]) if callback.message.reply_markup else 0
     user_id = callback.from_user.id
+    
     try:
         res = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
         if not res.data: return await callback.message.edit_text("❌ Gagal. Antrean tidak ditemukan.")
         antrean = res.data[0]
         
-        safe_display_name = html.escape(antrean['display_name'])
+        # --- CEK DUPLIKAT PER TOPIK ---
+        cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).eq("group_id", antrean["group_id"]).eq("message_thread_id", msg_thread_id or 0).execute())
+        if cek_dup.data:
+            await db_exec(lambda: supabase.table("upload_queue").delete().eq("file_unique_id", fid).eq("user_id", user_id).execute())
+            try: await callback.message.delete()
+            except: pass
+            return await callback.bot.send_message(chat_id=user_id, text=f"⚠️ <b>Batal Dikirim!</b>\nFile <code>{html.escape(antrean['original_name'])}</code> sudah pernah dikirim ke Topik tersebut.\n\n<i>File dihapus otomatis dari antrean.</i>", parse_mode="HTML")
         
-        # --- MENERAPKAN FORMAT WIZARD CAPTION ---
-        cache_data = wizard_cache.get(fid, {'show_name': True, 'custom_cap': ''})
-        caption_parts = []
-        if cache_data.get('show_name', True):
-            caption_parts.append(f"📁 <b>{safe_display_name}</b>")
-        if cache_data.get('custom_cap'):
-            caption_parts.append(f"📝 {html.escape(cache_data['custom_cap'])}")
-        
-        caption = "\n".join(caption_parts).strip()
-        # ----------------------------------------
+        safe_display_name = html.escape(antrean['display_name'] or antrean['original_name'])
+        caption = f"📁 <b>{safe_display_name}</b>"
 
-        grp_id_int = int(antrean["group_id"])
-        g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", grp_id_int).execute())
+        g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", antrean["group_id"]).execute())
         g_name = g_res.data[0]['group_name'] if g_res.data else "Grup"
         
         t_name = "General / Tidak Terdaftar"
         if msg_thread_id:
-            t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", grp_id_int).eq("message_thread_id", msg_thread_id).execute())
+            t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", antrean["group_id"]).eq("message_thread_id", msg_thread_id).execute())
             if t_res.data: t_name = t_res.data[0]['topic_name']
 
         try:
@@ -1476,33 +1272,22 @@ async def pilih_topik(callback: CallbackQuery):
 
             if backup_group_id_str and str(antrean["group_id"]) != backup_group_id_str:
                 try:
-                    cache_key = f"bthread_{grp_id_int}"
+                    cache_key = f"bthread_{antrean['group_id']}"
                     if cache_key in backup_thread_cache:
                         backup_thread_id = backup_thread_cache[cache_key]
                     else:
-                        map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", grp_id_int).execute())
+                        map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", antrean["group_id"]).execute())
                         backup_thread_id = None
-                        if map_res.data: 
-                            backup_thread_id = map_res.data[0]['backup_thread_id']
+                        if map_res.data: backup_thread_id = map_res.data[0]['backup_thread_id']
                         else:
                             new_topic = await callback.bot.create_forum_topic(chat_id=backup_group_id_str, name=g_name)
                             backup_thread_id = new_topic.message_thread_id
-                            await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": grp_id_int, "backup_thread_id": backup_thread_id}).execute())
-                        
-                        if backup_thread_id:
-                            backup_thread_cache[cache_key] = backup_thread_id
+                            await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": antrean["group_id"], "backup_thread_id": backup_thread_id}).execute())
+                        if backup_thread_id: backup_thread_cache[cache_key] = backup_thread_id
 
                     if backup_thread_id:
                         sender_name = f"@{callback.from_user.username}" if callback.from_user.username else callback.from_user.full_name
-                        
-                        caption_backup_parts = []
-                        if cache_data.get('show_name', True):
-                            caption_backup_parts.append(f"📁 <b>{safe_display_name}</b>")
-                        if cache_data.get('custom_cap'):
-                            caption_backup_parts.append(f"📝 {html.escape(cache_data['custom_cap'])}")
-                        
-                        caption_backup_parts.append(f"🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)")
-                        caption_backup = "\n".join(caption_backup_parts).strip()
+                        caption_backup = f"📁 <b>{safe_display_name}</b>\n🏢 Asal: {g_name} (Topik: {t_name})\n👤 Pengirim: {sender_name} (Via Bot Japri)"
                         
                         for attempt_bkp in range(5):
                             try:
@@ -1514,25 +1299,13 @@ async def pilih_topik(callback: CallbackQuery):
                                 success_backup_flag = True
                                 break
                             except Exception as er_b:
-                                if "429" in str(er_b) or "Too Many Requests" in str(er_b):
-                                    await asyncio.sleep(4)
-                                else:
-                                    break
+                                if "429" in str(er_b) or "Too Many Requests" in str(er_b): await asyncio.sleep(4)
+                                else: break
                 except Exception as eb: print(f"Gagal backup satuan: {eb}")
 
-            if str(antrean["group_id"]) == backup_group_id_str:
-                success_backup_flag = True
+            if str(antrean["group_id"]) == backup_group_id_str: success_backup_flag = True
 
-            await db_exec(lambda: supabase.table("files").upsert({
-                "file_unique_id": fid, 
-                "file_id": antrean["file_id"], 
-                "display_name": antrean["display_name"], 
-                "media_type": antrean["media_type"], 
-                "group_id": antrean["group_id"], 
-                "message_thread_id": int(thread_id_str), 
-                "message_id": msg_id,
-                "is_backed_up": success_backup_flag
-            }).execute())
+            await db_exec(lambda: supabase.table("files").insert({"file_unique_id": fid, "file_id": antrean["file_id"], "display_name": antrean["display_name"] or antrean["original_name"], "media_type": antrean["media_type"], "group_id": antrean["group_id"], "message_thread_id": int(thread_id_str), "message_id": msg_id, "is_backed_up": success_backup_flag}).execute())
 
         except Exception as e_kirim:
             err_msg = str(e_kirim).lower()
@@ -1543,15 +1316,11 @@ async def pilih_topik(callback: CallbackQuery):
                 await db_exec(lambda: supabase.table("groups").delete().eq("group_id", antrean["group_id"]).execute())
                 await db_exec(lambda: supabase.table("topics").delete().eq("group_id", antrean["group_id"]).execute())
                 return await callback.message.edit_text("❌ <b>GAGAL: GRUP SUDAH TIDAK ADA/AKSES DITOLAK!</b>", parse_mode="HTML")
-            
             return await callback.message.edit_text(f"❌ <b>Gagal mengirim file!</b>\nAlasan: <code>{e_kirim}</code>\n\n<i>Tenang, file lu masih aman di antrean. Silakan coba lagi.</i>", parse_mode="HTML")
 
         user_res = await db_exec(lambda: supabase.table("users").select("role").eq("user_id", user_id).execute())
         is_superadmin = user_res.data and user_res.data[0].get('role') == 'superadmin'
         backup_msg = " & dibackup!" if is_superadmin and backup_group_id_str and str(antrean["group_id"]) != backup_group_id_str else ""
-
-        # Bersihkan memori cache sesudah berhasil
-        if fid in wizard_cache: del wizard_cache[fid]
 
         try: await callback.message.delete()
         except: pass
@@ -1580,7 +1349,6 @@ async def queue_garbage_collector():
         except Exception as e: pass
         await asyncio.sleep(3600) 
 
-# --- FITUR BARU: AUTO SYNC DAILY (Per 24 Jam) ---
 async def daily_backup_checker(bot: Bot):
     print("⏳ Menunggu 15 detik sebelum Daily Backup Checker aktif...")
     await asyncio.sleep(15) 
@@ -1591,7 +1359,6 @@ async def daily_backup_checker(bot: Bot):
             backup_group_id_str = bg_res.data[0]['setting_value'] if bg_res.data else None
 
             if backup_group_id_str:
-                # Cari file yang is_backed_up = False dan urutkan sesuai waktu masuk
                 unbacked = await db_exec(lambda: supabase.table("files").select("*").eq("is_backed_up", False).order("created_at").execute())
                 
                 if unbacked.data:
@@ -1601,12 +1368,10 @@ async def daily_backup_checker(bot: Bot):
                         fid, file_id, media_type, d_name = item['file_unique_id'], item['file_id'], item['media_type'], item['display_name']
                         src_g, src_t = item['group_id'], item.get('message_thread_id')
                         
-                        # Keamanan ganda: skip kalau grup asalnya ternyata emang grup backup
                         if str(src_g) == backup_group_id_str:
                             await db_exec(lambda: supabase.table("files").update({"is_backed_up": True}).eq("file_unique_id", fid).execute())
                             continue
                             
-                        # Ambil nama grup buat caption
                         g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", src_g).execute())
                         g_name = g_res.data[0]['group_name'] if g_res.data else "Grup"
                         
@@ -1615,30 +1380,24 @@ async def daily_backup_checker(bot: Bot):
                             t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", src_g).eq("message_thread_id", src_t).execute())
                             if t_res.data: t_name = t_res.data[0]['topic_name']
 
-                        # Bikin/Ambil thread di Brankas
                         cache_key = f"bthread_{src_g}"
-                        if cache_key in backup_thread_cache:
-                            backup_thread_id = backup_thread_cache[cache_key]
+                        if cache_key in backup_thread_cache: backup_thread_id = backup_thread_cache[cache_key]
                         else:
                             map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", src_g).execute())
                             backup_thread_id = None
-                            if map_res.data: 
-                                backup_thread_id = map_res.data[0]['backup_thread_id']
+                            if map_res.data: backup_thread_id = map_res.data[0]['backup_thread_id']
                             else:
                                 try:
                                     new_topic = await bot.create_forum_topic(chat_id=backup_group_id_str, name=g_name)
                                     backup_thread_id = new_topic.message_thread_id
                                     await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": src_g, "backup_thread_id": backup_thread_id}).execute())
                                 except Exception as e: print(f"Gagal bikin topik backup di checker: {e}")
-                            
-                            if backup_thread_id:
-                                backup_thread_cache[cache_key] = backup_thread_id
+                            if backup_thread_id: backup_thread_cache[cache_key] = backup_thread_id
                                 
                         if backup_thread_id:
                             caption_backup = f"📁 <b>{html.escape(d_name)}</b>\n🏢 Asal: {g_name} (Topik: {t_name})\n🔄 <i>[Auto-Sync Daily]</i>"
                             
                             sent = False
-                            # Anti-spam limit
                             for attempt in range(5):
                                 try:
                                     if media_type == "document": await bot.send_document(chat_id=backup_group_id_str, message_thread_id=backup_thread_id, document=file_id, caption=caption_backup, parse_mode="HTML")
@@ -1649,19 +1408,14 @@ async def daily_backup_checker(bot: Bot):
                                     sent = True
                                     break
                                 except Exception as err_b:
-                                    if "429" in str(err_b) or "Too Many" in str(err_b):
-                                        await asyncio.sleep(4)
-                                    else:
-                                        break
+                                    if "429" in str(err_b) or "Too Many" in str(err_b): await asyncio.sleep(4)
+                                    else: break
                                         
-                            if sent:
-                                await db_exec(lambda: supabase.table("files").update({"is_backed_up": True}).eq("file_unique_id", fid).execute())
+                            if sent: await db_exec(lambda: supabase.table("files").update({"is_backed_up": True}).eq("file_unique_id", fid).execute())
                                 
-                        await asyncio.sleep(1.5) # Kasih jeda per file biar adem
+                        await asyncio.sleep(1.5) 
                         
-        except Exception as e:
-            print(f"Error Daily Backup Checker: {e}")
-            
+        except Exception as e: print(f"Error Daily Backup Checker: {e}")
         print("💤 Auto-Sync selesai. Tidur 24 jam...")
         await asyncio.sleep(86400) # 24 Jam
 
@@ -1706,10 +1460,9 @@ async def main():
     ]
     await bot.set_my_commands(cmd_group, scope=BotCommandScopeAllGroupChats())
     
-    # Menjalankan Background Tasks
     asyncio.create_task(queue_garbage_collector())
-    asyncio.create_task(daily_backup_checker(bot)) # Fitur Sync 24 Jam nyala bareng bot
-    asyncio.create_task(run_web_server()) 
+    asyncio.create_task(daily_backup_checker(bot))
+    asyncio.create_task(run_web_server())
     
     print("Mengecek sistem... VaultAssist siap beroperasi! 🟢")
     await dp.start_polling(bot)
