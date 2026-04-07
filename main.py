@@ -660,10 +660,7 @@ async def handle_group_media(message: Message):
                 
             teks_warn = f"⚠️ **PERINGATAN DUPLIKASI!**\nMedia ini sudah pernah dikirim sebelumnya di topik ini pada pesan berikut:\n🔗 <a href='{link}'>Lihat Pesan Lama</a>\n\n<i>Note: Yang dibackup ke Brankas Utama adalah file yang tidak kalian hapus. Silakan hapus pesan duplikat ini!</i>"
             
-            # Reply peringatan ke file baru
             await message.reply(teks_warn, parse_mode="HTML", disable_web_page_preview=True)
-            
-        # PENTING: Karena ini duplikat, jangan dibackup lagi dan jangan ditimpa lognya
         return
 
     success_backup_flag = False
@@ -992,7 +989,7 @@ async def kembali_ke_antrean(callback: CallbackQuery):
     except Exception: await callback.answer("Gagal kembali.")
 
 # ==========================================
-# FLOW UPLOAD SINGLE & BULK
+# FLOW UPLOAD SINGLE & BULK (INSTAN BYPASS)
 # ==========================================
 async def select_destination_group(message: Message, fid: str, user_id: int, is_callback=False):
     allowed_groups = await get_allowed_groups(message.bot if is_callback else message.bot, user_id)
@@ -1024,7 +1021,6 @@ async def proses_antrean_single(callback: CallbackQuery):
     try: await callback.answer()
     except: pass
     
-    # Langsung skip wizard dan suruh pilih grup!
     await select_destination_group(callback.message, fid, user_id, is_callback=True)
 
 @dp.callback_query(F.data.startswith("delq_"))
@@ -1228,16 +1224,20 @@ async def bulk_eksekusi(callback: CallbackQuery):
 async def pilih_topik(callback: CallbackQuery):
     thread_id_str, fid = callback.data[6:].split("_", 1)
     msg_thread_id = int(thread_id_str) if int(thread_id_str) != 0 else None
-    grp_id_int = int(callback.message.reply_markup.inline_keyboard[0][0].callback_data.split("_")[2]) if callback.message.reply_markup else 0
     user_id = callback.from_user.id
     
+    try: await callback.answer()
+    except: pass
+
     try:
         res = await db_exec(lambda: supabase.table("upload_queue").select("*").eq("file_unique_id", fid).eq("user_id", user_id).execute())
         if not res.data: return await callback.message.edit_text("❌ Gagal. Antrean tidak ditemukan.")
         antrean = res.data[0]
         
-        # --- CEK DUPLIKAT PER TOPIK ---
-        cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).eq("group_id", antrean["group_id"]).eq("message_thread_id", msg_thread_id or 0).execute())
+        grp_id_int = int(antrean["group_id"])
+        
+        # --- CEK DUPLIKAT PER TOPIK DENGAN AMAN ---
+        cek_dup = await db_exec(lambda: supabase.table("files").select("file_unique_id").eq("file_unique_id", fid).eq("group_id", grp_id_int).eq("message_thread_id", msg_thread_id or 0).execute())
         if cek_dup.data:
             await db_exec(lambda: supabase.table("upload_queue").delete().eq("file_unique_id", fid).eq("user_id", user_id).execute())
             try: await callback.message.delete()
@@ -1247,21 +1247,21 @@ async def pilih_topik(callback: CallbackQuery):
         safe_display_name = html.escape(antrean['display_name'] or antrean['original_name'])
         caption = f"📁 <b>{safe_display_name}</b>"
 
-        g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", antrean["group_id"]).execute())
+        g_res = await db_exec(lambda: supabase.table("groups").select("group_name").eq("group_id", grp_id_int).execute())
         g_name = g_res.data[0]['group_name'] if g_res.data else "Grup"
         
         t_name = "General / Tidak Terdaftar"
         if msg_thread_id:
-            t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", antrean["group_id"]).eq("message_thread_id", msg_thread_id).execute())
+            t_res = await db_exec(lambda: supabase.table("topics").select("topic_name").eq("group_id", grp_id_int).eq("message_thread_id", msg_thread_id).execute())
             if t_res.data: t_name = t_res.data[0]['topic_name']
 
         try:
             sent_msg = None
-            if antrean['media_type'] == "document": sent_msg = await callback.bot.send_document(chat_id=antrean["group_id"], message_thread_id=msg_thread_id, document=antrean["file_id"], caption=caption, parse_mode="HTML")
-            elif antrean['media_type'] == "photo": sent_msg = await callback.bot.send_photo(chat_id=antrean["group_id"], message_thread_id=msg_thread_id, photo=antrean["file_id"], caption=caption, parse_mode="HTML")
-            elif antrean['media_type'] == "video": sent_msg = await callback.bot.send_video(chat_id=antrean["group_id"], message_thread_id=msg_thread_id, video=antrean["file_id"], caption=caption, parse_mode="HTML")
-            elif antrean['media_type'] == "audio": sent_msg = await callback.bot.send_audio(chat_id=antrean["group_id"], message_thread_id=msg_thread_id, audio=antrean["file_id"], caption=caption, parse_mode="HTML")
-            elif antrean['media_type'] == "voice": sent_msg = await callback.bot.send_voice(chat_id=antrean["group_id"], message_thread_id=msg_thread_id, voice=antrean["file_id"], caption=caption, parse_mode="HTML")
+            if antrean['media_type'] == "document": sent_msg = await callback.bot.send_document(chat_id=grp_id_int, message_thread_id=msg_thread_id, document=antrean["file_id"], caption=caption, parse_mode="HTML")
+            elif antrean['media_type'] == "photo": sent_msg = await callback.bot.send_photo(chat_id=grp_id_int, message_thread_id=msg_thread_id, photo=antrean["file_id"], caption=caption, parse_mode="HTML")
+            elif antrean['media_type'] == "video": sent_msg = await callback.bot.send_video(chat_id=grp_id_int, message_thread_id=msg_thread_id, video=antrean["file_id"], caption=caption, parse_mode="HTML")
+            elif antrean['media_type'] == "audio": sent_msg = await callback.bot.send_audio(chat_id=grp_id_int, message_thread_id=msg_thread_id, audio=antrean["file_id"], caption=caption, parse_mode="HTML")
+            elif antrean['media_type'] == "voice": sent_msg = await callback.bot.send_voice(chat_id=grp_id_int, message_thread_id=msg_thread_id, voice=antrean["file_id"], caption=caption, parse_mode="HTML")
             
             msg_id = sent_msg.message_id if sent_msg else None
             await db_exec(lambda: supabase.table("upload_queue").delete().eq("file_unique_id", fid).eq("user_id", user_id).execute())
@@ -1270,19 +1270,19 @@ async def pilih_topik(callback: CallbackQuery):
             backup_group_id_str = bg_res.data[0]['setting_value'] if bg_res.data else None
             success_backup_flag = False
 
-            if backup_group_id_str and str(antrean["group_id"]) != backup_group_id_str:
+            if backup_group_id_str and str(grp_id_int) != backup_group_id_str:
                 try:
-                    cache_key = f"bthread_{antrean['group_id']}"
+                    cache_key = f"bthread_{grp_id_int}"
                     if cache_key in backup_thread_cache:
                         backup_thread_id = backup_thread_cache[cache_key]
                     else:
-                        map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", antrean["group_id"]).execute())
+                        map_res = await db_exec(lambda: supabase.table("backup_mapping").select("backup_thread_id").eq("source_group_id", grp_id_int).execute())
                         backup_thread_id = None
                         if map_res.data: backup_thread_id = map_res.data[0]['backup_thread_id']
                         else:
                             new_topic = await callback.bot.create_forum_topic(chat_id=backup_group_id_str, name=g_name)
                             backup_thread_id = new_topic.message_thread_id
-                            await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": antrean["group_id"], "backup_thread_id": backup_thread_id}).execute())
+                            await db_exec(lambda: supabase.table("backup_mapping").insert({"source_group_id": grp_id_int, "backup_thread_id": backup_thread_id}).execute())
                         if backup_thread_id: backup_thread_cache[cache_key] = backup_thread_id
 
                     if backup_thread_id:
@@ -1303,24 +1303,24 @@ async def pilih_topik(callback: CallbackQuery):
                                 else: break
                 except Exception as eb: print(f"Gagal backup satuan: {eb}")
 
-            if str(antrean["group_id"]) == backup_group_id_str: success_backup_flag = True
+            if str(grp_id_int) == backup_group_id_str: success_backup_flag = True
 
-            await db_exec(lambda: supabase.table("files").insert({"file_unique_id": fid, "file_id": antrean["file_id"], "display_name": antrean["display_name"] or antrean["original_name"], "media_type": antrean["media_type"], "group_id": antrean["group_id"], "message_thread_id": int(thread_id_str), "message_id": msg_id, "is_backed_up": success_backup_flag}).execute())
+            await db_exec(lambda: supabase.table("files").insert({"file_unique_id": fid, "file_id": antrean["file_id"], "display_name": antrean["display_name"] or antrean["original_name"], "media_type": antrean["media_type"], "group_id": grp_id_int, "message_thread_id": int(thread_id_str), "message_id": msg_id, "is_backed_up": success_backup_flag}).execute())
 
         except Exception as e_kirim:
             err_msg = str(e_kirim).lower()
             if "thread not found" in err_msg or "topic not found" in err_msg:
-                await db_exec(lambda: supabase.table("topics").delete().eq("message_thread_id", int(thread_id_str)).eq("group_id", antrean["group_id"]).execute())
+                await db_exec(lambda: supabase.table("topics").delete().eq("message_thread_id", int(thread_id_str)).eq("group_id", grp_id_int).execute())
                 return await callback.message.edit_text("❌ <b>GAGAL: TOPIK SUDAH TIDAK ADA!</b>\n\nTopik tujuan ternyata sudah dihapus manual. Silakan pilih topik lain.", parse_mode="HTML")
             elif "chat not found" in err_msg or "bot was kicked" in err_msg or "forbidden" in err_msg:
-                await db_exec(lambda: supabase.table("groups").delete().eq("group_id", antrean["group_id"]).execute())
-                await db_exec(lambda: supabase.table("topics").delete().eq("group_id", antrean["group_id"]).execute())
+                await db_exec(lambda: supabase.table("groups").delete().eq("group_id", grp_id_int).execute())
+                await db_exec(lambda: supabase.table("topics").delete().eq("group_id", grp_id_int).execute())
                 return await callback.message.edit_text("❌ <b>GAGAL: GRUP SUDAH TIDAK ADA/AKSES DITOLAK!</b>", parse_mode="HTML")
             return await callback.message.edit_text(f"❌ <b>Gagal mengirim file!</b>\nAlasan: <code>{e_kirim}</code>\n\n<i>Tenang, file lu masih aman di antrean. Silakan coba lagi.</i>", parse_mode="HTML")
 
         user_res = await db_exec(lambda: supabase.table("users").select("role").eq("user_id", user_id).execute())
         is_superadmin = user_res.data and user_res.data[0].get('role') == 'superadmin'
-        backup_msg = " & dibackup!" if is_superadmin and backup_group_id_str and str(antrean["group_id"]) != backup_group_id_str else ""
+        backup_msg = " & dibackup!" if is_superadmin and backup_group_id_str and str(grp_id_int) != backup_group_id_str else ""
 
         try: await callback.message.delete()
         except: pass
